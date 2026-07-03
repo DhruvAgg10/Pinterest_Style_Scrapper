@@ -1,0 +1,379 @@
+PROJECT OVERVIEW
+Project Name
+
+AI Fashion Pose & Style Finder
+
+Project Objective
+
+Build an AI-powered web application that helps users find aesthetic reference photos based on their own outfit, tattoos, accessories, and desired look.
+
+Instead of searching Pinterest manually, users upload their outfit and tattoo images, and the AI analyzes them to recommend visually similar photos from Pinterest (or another image source) that can be recreated in real life.
+
+The AI should understand the complete aesthetic rather than simply matching colors.
+
+Core User Flow
+User uploads
+
+↓
+
+Outfit Images
+
+↓
+
+Tattoo Images
+
+↓
+
+(Optional)
+Shoes
+Accessories
+Body Photo
+
+↓
+
+AI analyzes every image
+
+↓
+
+Extracts
+
+• Clothing
+• Colors
+• Tattoo Style
+• Visible Body Areas
+• Fashion Style
+• Overall Aesthetic
+
+↓
+
+Generates search keywords
+
+↓
+
+Searches Pinterest
+(or local image database)
+
+↓
+
+Ranks results
+
+↓
+
+Shows top matching images
+
+↓
+
+User saves references
+Project Vision
+
+The goal is NOT image generation.
+
+The goal is AI-powered visual inspiration.
+
+Think of the application as
+
+"Pinterest Search powered by AI instead of keywords."
+
+Main Features
+Phase 1
+Upload outfit
+Upload tattoo
+Analyze images
+Extract style
+Search similar images
+Display recommendations
+Phase 2
+Pose recommendation
+Outfit recommendation
+Save collections
+Moodboards
+Filters
+Phase 3
+AI Virtual Try-On
+Personalized stylist
+Outfit combinations
+Automatic aesthetic scoring
+Preferred Tech Stack
+
+Frontend
+
+React
+TailwindCSS
+
+Backend
+
+FastAPI (preferred)
+Flask (acceptable)
+
+Database
+
+MongoDB
+
+Vector Database
+
+FAISS (local)
+ChromaDB
+
+Machine Learning
+
+Python
+
+Libraries
+
+PyTorch
+OpenCV
+Pillow
+Transformers
+OpenCLIP
+
+Authentication
+
+Firebase Auth
+
+Storage
+
+Cloudinary
+
+Deployment
+
+Vercel
+Render
+Folder Structure
+client/
+
+server/
+
+models/
+
+vector_db/
+
+uploads/
+
+services/
+
+controllers/
+
+utils/
+
+config/
+
+docs/
+
+README.md
+
+PROJECT_OVERVIEW.md
+AI Assistant Instructions
+
+Whenever you work on this project, always follow these rules.
+
+Rule 1
+
+Never assume requirements.
+
+If something is unclear,
+
+ASK FIRST.
+
+Rule 2
+
+Build in small modules.
+
+Finish one module completely before starting another.
+
+Rule 3
+
+After EVERY completed step,
+
+explain:
+
+A. Simple Explanation
+
+Explain like you're talking to someone who is not technical.
+
+Example
+
+"I created the upload page so users can now select outfit images from their computer."
+
+B. Technical Explanation
+
+Explain exactly what was built.
+
+Example
+
+"Created a React Upload component using react-dropzone. Images are sent as multipart/form-data to the FastAPI backend using Axios."
+
+C. Files Modified
+
+Always list
+
+Created
+
+Modified
+
+Deleted
+D. Why This Step Was Needed
+
+Explain
+
+Why it exists
+What problem it solves
+How it connects to the next step
+E. Next Recommended Step
+
+Always suggest
+
+"The logical next step is..."
+
+Do not automatically start it.
+
+Wait for confirmation.
+
+Error Handling
+
+Whenever an error occurs,
+
+explain
+
+Why it happened
+What caused it
+Possible fixes
+Best fix
+Why the chosen fix is recommended
+
+Do not silently fix problems.
+
+Code Style
+
+Always write
+
+clean code
+reusable code
+modular code
+properly commented code
+
+Never duplicate logic.
+
+APIs and External Services
+
+Whenever a feature requires an API, SDK, connector, or third-party service:
+
+Stop before implementing the integration.
+Clearly explain why the service is needed and what functionality it provides.
+Recommend a free tier or open-source option first whenever possible.
+List:
+Service/API name
+Official documentation
+Free tier availability
+API key or credentials required
+Rate limits (if applicable)
+Ask the user to provide the required credentials only after explaining the need.
+Do not hardcode secrets in the codebase. Use environment variables (.env) and provide a sample .env.example file.
+If multiple free options exist, compare them briefly and recommend one.
+
+Example format:
+
+This feature requires an image hosting service.
+
+Recommended (Free):
+• Cloudinary
+Reason:
+- Free tier
+- Easy integration
+- Image optimization
+- Good documentation
+
+Required from you:
+✓ Cloudinary Cloud Name
+✓ API Key
+✓ API Secret
+
+Documentation:
+https://cloudinary.com/documentation
+Connectors
+
+Whenever possible,
+
+prefer
+
+✅ Open Source
+
+then
+
+✅ Free APIs
+
+then
+
+Paid APIs
+
+Never choose a paid API if an equivalent free option exists.
+
+Search Strategy
+
+Priority:
+
+Local database
+Pinterest
+Unsplash
+Pexels
+Other public image APIs
+
+Never scrape websites if an official API or legal alternative exists.
+
+AI Image Analysis Strategy
+
+Analyze
+
+clothing
+colors
+tattoo style
+accessories
+hairstyle
+visible muscles
+body proportions
+fashion aesthetic
+lighting
+background
+pose
+facial direction
+
+Convert these into structured tags.
+
+Recommendation Strategy
+
+Recommendations should consider
+
+Outfit similarity
+Tattoo placement
+Fashion style
+Pose similarity
+Color harmony
+Lighting
+Gym vs Casual vs Streetwear
+Overall aesthetic score
+
+Never rank images using only one factor.
+
+Documentation Rule
+
+Every completed module must include:
+
+Purpose
+Architecture
+Flow
+Dependencies
+API usage
+Setup instructions
+Known limitations
+Future improvements
+Development Philosophy
+
+The project should be:
+
+Modular
+Scalable
+Easy to maintain
+Well documented
+Beginner-friendly
+Production-ready where possible
+
+Optimize for readability over cleverness. Every major decision should be explained so that another developer (or future AI session) can quickly understand the reasoning behind the implementation.
