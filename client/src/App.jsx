@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import axios from 'axios';
 import PrivacyPolicyPage from './PrivacyPolicyPage';
 
@@ -10,7 +10,22 @@ function App() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [inspiration, setInspiration] = useState(null);
-  const [showPrivacy, setShowPrivacy] = useState(false);
+  const [currentRoute, setCurrentRoute] = useState(typeof window !== 'undefined' ? window.location.pathname : '/');
+  const [privacyUrl, setPrivacyUrl] = useState(typeof window !== 'undefined' ? `${window.location.origin}/privacy-policy` : 'https://ai-fashion-pose-style-finder.vercel.app/privacy-policy');
+
+  useEffect(() => {
+    const handleLocationChange = () => setCurrentRoute(window.location.pathname);
+    window.addEventListener('popstate', handleLocationChange);
+    return () => window.removeEventListener('popstate', handleLocationChange);
+  }, []);
+
+  const navigateTo = (path) => {
+    window.history.pushState({}, '', path);
+    setCurrentRoute(path);
+    if (path === '/privacy-policy') {
+      setPrivacyUrl(`${window.location.origin}/privacy-policy`);
+    }
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -36,11 +51,11 @@ function App() {
     }
   };
 
-  if (showPrivacy) {
+  if (currentRoute === '/privacy-policy' || currentRoute === '/privacy') {
     return (
       <div>
         <div style={{ maxWidth: 900, margin: '0 auto', padding: '12px 24px 0' }}>
-          <button onClick={() => setShowPrivacy(false)} style={{ cursor: 'pointer' }}>Back to app</button>
+          <button onClick={() => navigateTo('/')} style={{ cursor: 'pointer' }}>Back to app</button>
         </div>
         <PrivacyPolicyPage />
       </div>
@@ -51,7 +66,7 @@ function App() {
     <div style={{ fontFamily: 'sans-serif', maxWidth: 900, margin: '0 auto', padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h1 style={{ margin: 0 }}>AI Fashion Pose & Style Finder</h1>
-        <button onClick={() => setShowPrivacy(true)} style={{ cursor: 'pointer' }}>Privacy Policy</button>
+        <button onClick={() => navigateTo('/privacy-policy')} style={{ cursor: 'pointer' }}>Privacy Policy</button>
       </div>
       <p>Upload separate images for upper wear, lower wear, accessories, and tattoos. The engine now runs a live image-analysis pipeline and returns structured results for each category.</p>
 
@@ -80,7 +95,7 @@ function App() {
       </form>
 
       <p style={{ marginTop: 12 }}>
-        For Pinterest API access, use this privacy policy page URL in your app submission and documentation: <strong>/privacy-policy</strong>
+        For Pinterest API access, use this privacy policy page URL in your app submission and documentation: <strong>{privacyUrl}</strong>
       </p>
 
       {result && (
