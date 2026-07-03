@@ -1,1 +1,10 @@
 .vercel
+node_modules/
+.venv/
+dist/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+.env
