@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import PrivacyPolicyPage from './PrivacyPolicyPage';
+import { HomePage, AboutPage, CompanyPage, TestingPage, FitCheckPage, ContactPage } from './FashionPages';
+import { Page } from './components/Layout';
+
+// In production (Vercel) VITE_API_BASE points at the Hugging Face Space backend.
+// In local dev it stays empty and Vite proxies /api to the local FastAPI server.
+axios.defaults.baseURL = import.meta.env.VITE_API_BASE || '';
 
 function App() {
   const [upperFiles, setUpperFiles] = useState([]);
@@ -10,8 +16,9 @@ function App() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [inspiration, setInspiration] = useState(null);
+  const [captions, setCaptions] = useState({});
+  const [captionLoadingKey, setCaptionLoadingKey] = useState(null);
   const [currentRoute, setCurrentRoute] = useState(typeof window !== 'undefined' ? window.location.pathname : '/');
-  const [privacyUrl, setPrivacyUrl] = useState(typeof window !== 'undefined' ? `${window.location.origin}/privacy-policy` : 'https://ai-fashion-pose-style-finder.vercel.app/privacy-policy');
 
   useEffect(() => {
     const handleLocationChange = () => setCurrentRoute(window.location.pathname);
@@ -22,9 +29,6 @@ function App() {
   const navigateTo = (path) => {
     window.history.pushState({}, '', path);
     setCurrentRoute(path);
-    if (path === '/privacy-policy') {
-      setPrivacyUrl(`${window.location.origin}/privacy-policy`);
-    }
   };
 
   const handleSubmit = async (event) => {
@@ -51,99 +55,70 @@ function App() {
     }
   };
 
+  const handleRecreate = async (item, index) => {
+    const key = `${item.title}-${index}`;
+    setCaptionLoadingKey(key);
+    try {
+      const response = await axios.post('/api/caption', {
+        style_tags: result?.recommended_tags || [],
+        title: item.title
+      });
+      setCaptions((previous) => ({ ...previous, [key]: response.data.captions }));
+    } catch (error) {
+      console.error(error);
+      setCaptions((previous) => ({ ...previous, [key]: { error: 'Could not generate captions. Please try again.' } }));
+    } finally {
+      setCaptionLoadingKey(null);
+    }
+  };
+
   if (currentRoute === '/privacy-policy' || currentRoute === '/privacy') {
     return (
-      <div>
-        <div style={{ maxWidth: 900, margin: '0 auto', padding: '12px 24px 0' }}>
-          <button onClick={() => navigateTo('/')} style={{ cursor: 'pointer' }}>Back to app</button>
-        </div>
+      <Page active="/privacy-policy" navigateTo={navigateTo}>
         <PrivacyPolicyPage />
-      </div>
+      </Page>
     );
   }
 
+  if (currentRoute === '/about') {
+    return <AboutPage navigateTo={navigateTo} />;
+  }
+
+  if (currentRoute === '/company') {
+    return <CompanyPage navigateTo={navigateTo} />;
+  }
+
+  if (currentRoute === '/testing') {
+    return <TestingPage navigateTo={navigateTo} />;
+  }
+
+  if (currentRoute === '/fit-check') {
+    return <FitCheckPage navigateTo={navigateTo} />;
+  }
+
+  if (currentRoute === '/contact') {
+    return <ContactPage navigateTo={navigateTo} />;
+  }
+
   return (
-    <div style={{ fontFamily: 'sans-serif', maxWidth: 900, margin: '0 auto', padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h1 style={{ margin: 0 }}>AI Fashion Pose & Style Finder</h1>
-        <button onClick={() => navigateTo('/privacy-policy')} style={{ cursor: 'pointer' }}>Privacy Policy</button>
-      </div>
-      <p>Upload separate images for upper wear, lower wear, accessories, and tattoos. The engine now runs a live image-analysis pipeline and returns structured results for each category.</p>
-
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: 16 }}>
-          <label><strong>Upper wear</strong></label>
-          <input type="file" multiple onChange={(event) => setUpperFiles(Array.from(event.target.files || []))} />
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label><strong>Lower wear</strong></label>
-          <input type="file" multiple onChange={(event) => setLowerFiles(Array.from(event.target.files || []))} />
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label><strong>Accessories</strong></label>
-          <input type="file" multiple onChange={(event) => setAccessoryFiles(Array.from(event.target.files || []))} />
-        </div>
-
-        <div style={{ marginBottom: 16 }}>
-          <label><strong>Tattoo</strong></label>
-          <input type="file" multiple onChange={(event) => setTattooFiles(Array.from(event.target.files || []))} />
-        </div>
-
-        <button type="submit" disabled={loading}>{loading ? 'Analyzing…' : 'Analyze Images'}</button>
-      </form>
-
-      <p style={{ marginTop: 12 }}>
-        For Pinterest API access, use this privacy policy page URL in your app submission and documentation: <strong>{privacyUrl}</strong>
-      </p>
-
-      {result && (
-        <div style={{ marginTop: 24 }}>
-          {result.error ? (
-            <p>{result.error}</p>
-          ) : (
-            <>
-              <h2>Recommended tags</h2>
-              <ul>
-                {result.recommended_tags?.map((tag) => <li key={tag}>{tag}</li>)}
-              </ul>
-              <h2>Mapped inputs</h2>
-              <ul>
-                {Object.entries(result.grouped_analysis || {}).map(([key, value]) => (
-                  <li key={key}>
-                    <strong>{key}</strong>: {value?.style_tags?.join(', ')}
-                    {value?.analysis_mode ? ` · ${value.analysis_mode}` : ''}
-                  </li>
-                ))}
-              </ul>
-              <h2>Results</h2>
-              <ul>
-                {result.results?.map((item, index) => (
-                  <li key={`${item.title}-${index}`}>
-                    <strong>{item.title}</strong> — {item.source} (score {item.score})
-                  </li>
-                ))}
-              </ul>
-              <h2>Live inspiration</h2>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-                {inspiration?.results?.map((item, index) => (
-                  <div key={`${item.title}-${index}`} style={{ border: '1px solid #ddd', borderRadius: 8, padding: 8 }}>
-                    <a href={item.url} target="_blank" rel="noreferrer">
-                      <img src={item.image_url} alt={item.title} style={{ width: '100%', height: 160, objectFit: 'cover', borderRadius: 6 }} />
-                    </a>
-                    <div style={{ marginTop: 8 }}>
-                      <strong>{item.title}</strong>
-                      <div style={{ color: '#666', fontSize: 12 }}>{item.source}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-    </div>
+    <HomePage
+      navigateTo={navigateTo}
+      handleSubmit={handleSubmit}
+      upperFiles={upperFiles}
+      setUpperFiles={setUpperFiles}
+      lowerFiles={lowerFiles}
+      setLowerFiles={setLowerFiles}
+      accessoryFiles={accessoryFiles}
+      setAccessoryFiles={setAccessoryFiles}
+      tattooFiles={tattooFiles}
+      setTattooFiles={setTattooFiles}
+      result={result}
+      loading={loading}
+      inspiration={inspiration}
+      captions={captions}
+      captionLoadingKey={captionLoadingKey}
+      handleRecreate={handleRecreate}
+    />
   );
 }
 
