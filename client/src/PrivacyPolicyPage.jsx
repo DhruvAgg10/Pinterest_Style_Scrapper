@@ -58,7 +58,7 @@ function PrivacyPolicyPage() {
         <div>
           <h2 className="heading-md" style={{ marginBottom: 8, fontSize: 18 }}>Contact</h2>
           <p className="text-muted">
-            For privacy questions, contact: <strong>support@yourdomain.com</strong>
+            For privacy questions, contact: <a href="mailto:hbuster30@gmail.com">hbuster30@gmail.com</a>
           </p>
         </div>
       </div>

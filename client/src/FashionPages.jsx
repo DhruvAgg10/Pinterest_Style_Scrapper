@@ -164,7 +164,7 @@ export function HomePage({ navigateTo, handleSubmit, upperFiles, setUpperFiles, 
         <h2 className="heading-lg" style={{ marginBottom: 10 }}>Contact</h2>
         <p className="text-muted" style={{ marginBottom: 16 }}>Need help with a fashion-tech pilot, fit-check concept, or brand styling experience? Reach out and we'll discuss the next steps.</p>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <a href="mailto:hello@stylepilot.app" className="btn btn-primary">hello@stylepilot.app</a>
+          <a href="mailto:hbuster30@gmail.com" className="btn btn-primary">hbuster30@gmail.com</a>
           <button className="btn btn-secondary" onClick={() => navigateTo('/privacy-policy')}>View privacy policy</button>
         </div>
       </div>
@@ -246,7 +246,7 @@ export function ContactPage({ navigateTo }) {
         <h1 className="heading-lg" style={{ marginBottom: 16 }}>Let's build something polished together.</h1>
         <p className="text-muted" style={{ marginBottom: 20 }}>For partnerships, product questions, or collaboration requests, send us a note and we will follow up with the next steps.</p>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <a href="mailto:hello@stylepilot.app" className="btn btn-primary">hello@stylepilot.app</a>
+          <a href="mailto:hbuster30@gmail.com" className="btn btn-primary">hbuster30@gmail.com</a>
           <button className="btn btn-secondary" onClick={() => navigateTo('/privacy-policy')}>Privacy policy</button>
         </div>
       </div>

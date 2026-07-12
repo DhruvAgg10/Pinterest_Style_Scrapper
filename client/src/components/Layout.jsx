@@ -50,7 +50,7 @@ export function Footer({ navigateTo }) {
   return (
     <div className="footer">
       <div className="footer-row">
-        <a href="mailto:hello@stylepilot.app" className="btn btn-primary">hello@stylepilot.app</a>
+        <a href="mailto:hbuster30@gmail.com" className="btn btn-primary">hbuster30@gmail.com</a>
         <button className="btn btn-secondary" onClick={() => navigateTo('/privacy-policy')}>Privacy policy</button>
         <span className="text-muted" style={{ marginLeft: 'auto', fontSize: 13 }}>© {new Date().getFullYear()} StylePilot Studio</span>
       </div>
