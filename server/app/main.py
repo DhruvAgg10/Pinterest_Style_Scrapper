@@ -1,7 +1,3 @@
-import tempfile
-import uuid
-from pathlib import Path
-
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -48,22 +44,14 @@ async def analyze_images(
     tattoo_images: List[UploadFile] = File(default=None),
 ) -> dict[str, object]:
     analyses = []
-    embeddings: List[Optional[List[float]]] = []
 
     async def process_group(files: Optional[List[UploadFile]], category: str) -> None:
-        for upload in files or []:
+        # Only the first image per category is sent to the vision model. Each call is a
+        # remote LLM round-trip, and the serverless function has a hard time budget.
+        for upload in (files or [])[:1]:
             try:
                 contents = await upload.read()
-                temp_dir = Path(tempfile.gettempdir())
-                temp_dir.mkdir(parents=True, exist_ok=True)
-                safe_name = Path(upload.filename or f"{uuid.uuid4().hex}.bin").name
-                temp_path = temp_dir / safe_name
-                with open(temp_path, "wb") as handle:
-                    handle.write(contents)
-
-                analysis = build_analysis_payload(str(temp_path), category)
-                embeddings.append(analysis.pop("_embedding", None))
-                analyses.append(analysis)
+                analyses.append(build_analysis_payload(contents, category))
             except Exception as exc:
                 analyses.append({
                     "category": category,
@@ -81,8 +69,12 @@ async def analyze_images(
 
     recommendation = build_recommendation_payload(analyses)
     recommendation["inspiration"] = build_inspiration_payload(
-        "fashion outfit inspiration", analyses=analyses, reference_embeddings=embeddings
+        "fashion outfit inspiration", analyses=analyses
     )
+    # Internal hints from the analyzer must not leak into the API response.
+    for analysis in recommendation.get("grouped_analysis", {}).values():
+        if isinstance(analysis, dict):
+            analysis.pop("_search_query", None)
     return recommendation
 
 

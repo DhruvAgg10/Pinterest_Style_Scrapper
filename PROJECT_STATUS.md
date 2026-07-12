@@ -13,7 +13,8 @@ Users upload photos of their **outfit, tattoos, accessories, and body/pose**. Th
 understand the *complete aesthetic* (not just colors), then returns:
 
 1. A structured **style analysis** — aesthetic tags, colors, fit guidance.
-2. **Visually similar inspiration images** ranked by real image similarity (Pinterest official API + Pexels).
+2. **Matching inspiration images** (Pinterest official API + Pexels), found via a search phrase the
+   vision model writes from your photo.
 3. **Instagram captions** for any chosen reference image.
 
 > The goal is **NOT** image generation. It is **AI-powered visual inspiration** —
@@ -26,62 +27,77 @@ to stay inside Pinterest Developer Guidelines and qualify for API access.
 
 ## 2. Architecture (target — the "strong base")
 
+Everything ships as **one Vercel project**.
+
 | Layer | Choice | Why |
 |-------|--------|-----|
-| Frontend | React + Vite (static build) | Deploys as static on Vercel |
-| Backend | FastAPI (serverless on Vercel) | `api/index.py` entry |
-| AI backend | **FastAPI + PyTorch + CLIP** on a **Docker Hugging Face Space** | Real image embeddings for visual similarity; `torch`/`transformers` won't fit in Vercel's 250 MB serverless limit |
-| Frontend | React + Vite static site on **Vercel** | Calls the Space via `VITE_API_BASE` |
-| Image sources | Pinterest v5 API (primary) → Pexels API (fallback) | No scraping; guideline-compliant |
+| Frontend | React + Vite, static build → `dist/` | Served by Vercel |
+| Backend | FastAPI on a **Vercel Python serverless function** (`api/index.py`) | Fits the size limit now that torch is gone |
+| AI | **Hugging Face Inference Providers** over HTTPS (`huggingface_hub`) | Free tier; no heavy ML deps in the bundle |
+| Image sources | Pinterest v5 API (if token) → Pexels API | No scraping; guideline-compliant |
 
-**Decision (2026-07-12):** AI runs on a free HF Space, not on Vercel. Vercel serverless can't hold
-`torch`+CLIP, and HF's new Inference Providers router has poor support for CLIP image embeddings —
-which are the core of the visual-similarity engine. Keeping a real FastAPI+torch backend on a Space
-preserves that feature. Frontend stays static on Vercel and proxies to the Space.
+Models (remote, free tier):
+- Image analysis: `google/gemma-3-27b-it` — a **vision-language model**. It reads the photo and returns
+  `{aesthetic_tags, colors, search_query}` as JSON.
+- Captions: same model, text-only.
 
-Models (run locally inside the Space, free):
-- Style tags + image embeddings: `openai/clip-vit-base-patch32` (zero-shot + feature extraction)
-- Captions: `google/flan-t5-base` (text2text)
+**Key rule:** the serverless function must never import `torch`/`transformers`.
+If `HF_TOKEN` is absent the app degrades to local heuristics + caption templates instead of failing.
+
+### How we got here (two dead ends, recorded so we don't retry them)
+1. **torch + CLIP on Vercel** — impossible. `torch` alone blows past Vercel's 250 MB function limit.
+   This is why the app never actually deployed before.
+2. **torch + CLIP on a free HF Space** — blocked. HF now requires a **PRO subscription ($9/mo)** to run
+   Docker/Gradio Spaces on `cpu-basic` (`402 Payment Required`). Only Static Spaces are free.
+3. **CLIP via HF Inference API** — not available. The `hf-inference` provider currently serves **zero**
+   `zero-shot-image-classification` and **zero** `image-feature-extraction` models. Verified against the
+   live API.
+
+**Consequence:** there are no free CLIP image embeddings, so ranking candidates by *pixel-level visual
+similarity* is not currently possible. Instead the VLM converts the photo into a precise semantic search
+phrase (e.g. a linen-shirt photo → `"oversized linen shirt dress"`), which is what actually drives the
+match. `match_mode` in the API response reports `keyword-semantic` to be honest about this.
 
 ---
 
 ## 3. Done
 
+**The base (2026-07-12) — app is now genuinely deployable and every AI path is verified live.**
+
 - [x] Project scaffold: FastAPI backend, React/Vite frontend, Vercel config.
 - [x] Upload flow: 4 categories (upper / lower / accessories / tattoo), multipart to `/api/analyze`.
-- [x] CLIP zero-shot aesthetic tagging + image embedding (currently local torch — being moved to HF API).
-- [x] Inspiration ranking: fetch candidates → lifestyle-vs-product filter → cosine-similarity rank vs upload.
-- [x] Instagram caption generation (normal + trendy variants).
-- [x] Pexels API integration (key provided).
-- [x] Graceful fallbacks: no model → heuristic tags; no caption model → templates; no key → empty.
-- [x] Marketing/info pages (About, Company, Testing, FitCheck, Contact) + Privacy Policy page & public route.
-- [x] Backend tests: analysis + caption payload structure.
+- [x] **Image analysis via VLM** (`gemma-3-27b-it`) → aesthetic tags, colors, semantic search query.
+- [x] **Inspiration**: VLM search phrase → Pinterest v5 API → Pexels fallback.
+- [x] **Instagram captions** (normal + trendy) from the same model.
+- [x] Torch/transformers removed entirely — backend fits Vercel's Python function.
+- [x] Pinterest: official v5 `GET /v5/pins`, largest image, real pin URLs. Never scrapes.
+- [x] Graceful fallbacks: no HF token → heuristic tags + caption templates; no keys → empty results.
+- [x] Removed the fake `recommendation.results` stub (`score: 0.92`).
+- [x] Internal `_search_query` hint stripped from API responses.
+- [x] Marketing/info pages + Privacy Policy page & public route.
+- [x] Repo hygiene: untracked `dist/`+`*.pyc`, removed stray files. Added `.env.example`.
+- [x] Tests: 11 passing (0.6s — no model loading). Frontend builds.
+- [x] **Verified end-to-end**: real photo → VLM tags → `"oversized linen shirt dress"` → matching Pexels
+      results → real model captions. `tag_source: vision-model`, `caption_source: text-generation-model`.
 
 ---
 
-## 4. In Progress / Current Sprint — "Strong Base"
+## 4. Current Sprint
 
-Goal: make the app **actually deployable** (real backend that runs) + be **Pinterest-approval-ready**.
-
-- [x] **Split architecture**: FastAPI+CLIP backend → Docker HF Space; static frontend → Vercel.
-- [x] Frontend calls backend via `VITE_API_BASE` (absolute Space URL in prod, Vite proxy in dev).
-- [x] `Dockerfile` + `.dockerignore` for the HF Space (non-root UID 1000, port 7860, writable model cache).
-- [x] `vercel.json` reduced to static build + SPA rewrite (dropped the Python function).
-- [x] Fix Pinterest integration: read authed user's Pins via `GET /v5/pins`, largest image, real pin URLs.
-- [x] Pinterest guideline compliance documented (README no-scraping statement + first-party Pins use-case).
-- [x] Repo hygiene: untracked `dist/` + `*.pyc`, removed `tmp_test_image.png` and redundant `api/index.py`.
-- [x] Added `.env.example`.
-- [x] Verified: 7 backend tests pass, `npm run build` succeeds.
-- [ ] **Deploy**: create the HF Space + set Vercel `VITE_API_BASE` (needs your HF account — see §6).
-- [ ] Commit the base (this change set).
+- [ ] Deploy to Vercel with `HF_TOKEN` + `PEXELS_API_KEY` env vars; verify live.
+- [ ] Push to GitHub.
+- [ ] Pinterest Developer app (needs the live privacy-policy URL) → add `PINTEREST_ACCESS_TOKEN`.
 
 ---
 
 ## 5. Backlog (from Project Overview vision)
 
 **Phase 1 completeness**
-- [ ] Replace hardcoded `recommendation.results` stub (`score: 0.92`) with real data.
-- [ ] Multi-factor analysis: tattoo *placement*, lighting, background, body areas (spec wanted more than CLIP tags).
+- [ ] Analyze *all* uploaded images, not just the first per category (currently capped at 1 per category
+      to stay inside the serverless time budget — needs batching or a background job).
+- [ ] Restore true **visual similarity** ranking. Blocked on free CLIP embeddings; options: a paid HF
+      Space/endpoint, a self-hosted embedder, or a provider that serves image feature-extraction.
+- [ ] Multi-factor analysis: tattoo *placement*, lighting, background, body areas.
 - [ ] Pose analysis (OpenCV / pose model) — a core spec item, not yet started.
 - [ ] TailwindCSS (spec) vs current hand-written CSS — decide & align.
 
@@ -101,20 +117,26 @@ Goal: make the app **actually deployable** (real backend that runs) + be **Pinte
 
 | # | Item | Why | Status |
 |---|------|-----|--------|
-| 1 | **Hugging Face account** → create a **Docker Space**, push this repo to it, add `PEXELS_API_KEY` secret | Hosts the FastAPI+CLIP backend for free | ⏳ pending |
-| 2 | Give me the **Space URL** (e.g. `https://<user>-<space>.hf.space`) | To set as Vercel `VITE_API_BASE` | ⏳ pending |
-| 3 | **Vercel**: import repo, set env `VITE_API_BASE` = Space URL, deploy | Hosts the frontend | ⏳ pending |
-| 4 | **Pinterest Developer app** (developers.pinterest.com) — create app once the site is live, get access token | Enables the official Pinterest inspiration source (needs a live privacy-policy URL, which Vercel gives us) | ⏳ pending (needs live URL first) |
-| 5 | Pexels API key | Fallback image source | ✅ provided |
+| 1 | Pexels API key | Image source | ✅ provided |
+| 2 | Hugging Face token | Vision model + captions | ✅ provided |
+| 3 | Vercel account linked | Deploy target | ✅ linked |
+| 4 | **Rotate the HF + Pexels keys** — both were pasted into chat | Hygiene; they're exposed | ⚠️ recommended |
+| 5 | **Pinterest Developer app** (developers.pinterest.com) — create once the site is live, then hand over the access token | Enables the official Pinterest inspiration source. Requires a live privacy-policy URL, which the Vercel deploy provides at `/privacy-policy` | ⏳ pending (needs live URL) |
 
 ---
 
 ## 7. Changelog
 
-- **2026-07-12** — Created this status doc. Diagnosed Vercel deploy blocker (torch/transformers exceed
-  serverless size limit).
-- **2026-07-12** — Built the strong base: split architecture (Docker HF Space backend + Vercel static
-  frontend). Added `Dockerfile`, `.dockerignore`, `.env.example`; env-based `VITE_API_BASE`; static-only
-  `vercel.json`; fixed Pinterest to official v5 `/pins`; repo hygiene (untracked `dist/`+`*.pyc`, removed
-  stray files + redundant `api/index.py`); rewrote README with architecture + deploy steps. All tests
-  pass, frontend builds. Remaining: create the Space + wire Vercel env (needs HF account).
+- **2026-07-12** — Created this status doc. Diagnosed the real Vercel deploy blocker: `torch`/`transformers`
+  exceed the serverless size limit, so the app had never actually deployed.
+- **2026-07-12** — First attempt at a fix: split architecture (Docker HF Space backend + Vercel static
+  frontend). Added `Dockerfile`, env-based `VITE_API_BASE`, fixed Pinterest to official v5 `/pins`, repo
+  hygiene, rewrote README.
+- **2026-07-12** — **Abandoned the Space plan**: HF now charges for Docker Spaces (`402 Payment Required`,
+  PRO only). Also confirmed the free `hf-inference` provider serves no CLIP / image-embedding models at all.
+- **2026-07-12** — **Rebuilt on the free path and shipped the base.** Replaced local CLIP+flan-t5 with
+  remote calls to `google/gemma-3-27b-it` (vision-language) via HF Inference Providers. Dropped
+  `torch`/`transformers`; backend now fits a Vercel Python function. Restored `api/index.py` + serverless
+  `vercel.json` (60s budget). Removed the `Dockerfile`/Space artifacts and the fake `score: 0.92` stub.
+  Capped analysis to one image per category for the time budget. Tests 7 → 11, runtime 45s → 0.6s.
+  Verified live end-to-end: photo → tags → semantic query → matching images → captions.

@@ -4,8 +4,11 @@ import os
 import random
 from typing import Dict, List, Optional
 
-_CAPTION_MODEL = None
-_CAPTION_TOKENIZER = None
+# Instruct model on Hugging Face Inference Providers (free tier). No torch locally.
+# Same model as the image analyzer — it is the one reliably served for this account.
+CAPTION_MODEL = os.getenv("CAPTION_MODEL", "google/gemma-3-27b-it")
+
+_HF_CLIENT = None
 
 _FALLBACK_NORMAL_TEMPLATES = [
     "Feeling good in this {aesthetic} look today.",
@@ -22,32 +25,27 @@ _FALLBACK_TRENDY_TEMPLATES = [
 ]
 
 
-def _load_caption_model():
-    global _CAPTION_MODEL, _CAPTION_TOKENIZER
-    if _CAPTION_MODEL is None:
-        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+def _hf_client():
+    global _HF_CLIENT
+    if _HF_CLIENT is None:
+        from huggingface_hub import InferenceClient
 
-        model_name = os.getenv("CAPTION_MODEL", "google/flan-t5-base")
-        _CAPTION_TOKENIZER = AutoTokenizer.from_pretrained(model_name)
-        _CAPTION_MODEL = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-        _CAPTION_MODEL.eval()
-    return _CAPTION_MODEL, _CAPTION_TOKENIZER
+        token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN")
+        _HF_CLIENT = InferenceClient(token=token) if token else False
+    return _HF_CLIENT
 
 
 def _generate_with_model(prompt: str) -> str:
-    import torch
-
-    model, tokenizer = _load_caption_model()
-    inputs = tokenizer(prompt, return_tensors="pt")
-    with torch.no_grad():
-        output_ids = model.generate(
-            **inputs,
-            max_new_tokens=40,
-            do_sample=True,
-            temperature=0.9,
-            top_p=0.95,
-        )
-    return tokenizer.decode(output_ids[0], skip_special_tokens=True).strip().strip('"')
+    client = _hf_client()
+    if not client:
+        raise RuntimeError("no HF token configured")
+    completion = client.chat_completion(
+        model=CAPTION_MODEL,
+        max_tokens=40,
+        temperature=0.9,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return completion.choices[0].message.content.strip().strip('"')
 
 
 def _fallback_caption(aesthetic: str, style: str) -> str:
@@ -63,11 +61,11 @@ def build_caption_payload(style_tags: Optional[List[str]] = None, title: Optiona
 
     normal_prompt = (
         f"Write one short, genuine Instagram caption (under 20 words, no hashtags) "
-        f"for a photo with a {context} aesthetic{reference}."
+        f"for a photo with a {context} aesthetic{reference}. Reply with only the caption."
     )
     trendy_prompt = (
         f"Write one short, trendy Gen Z Instagram caption (under 15 words, playful tone, "
-        f"emojis welcome) for a photo with a {context} aesthetic{reference}."
+        f"emojis welcome) for a photo with a {context} aesthetic{reference}. Reply with only the caption."
     )
 
     try:

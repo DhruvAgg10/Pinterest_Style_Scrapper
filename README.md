@@ -1,80 +1,69 @@
----
-title: StylePilot Backend
-emoji: 👗
-colorFrom: pink
-colorTo: indigo
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # StylePilot — AI Fashion Pose & Style Finder
 
-Upload photos of your outfit, tattoos, and accessories. The app classifies the aesthetic with
-CLIP zero-shot tagging, ranks visually similar inspiration images (Pinterest official API + Pexels)
-by real image similarity to your upload, and generates Instagram captions for any reference you pick.
+Upload photos of your outfit, tattoos, and accessories. A vision-language model reads the look and
+returns structured style tags and fit guidance, pulls matching inspiration images (Pinterest official
+API + Pexels), and generates Instagram captions for any reference you pick.
 
-> The frontmatter block above is read by **Hugging Face Spaces** (Docker SDK) — it is ignored by the
-> app itself. See `PROJECT_STATUS.md` for the full roadmap and current status.
+See `PROJECT_STATUS.md` for the roadmap and current status.
 
 ## Architecture
 
-- **Frontend** — React + Vite, deployed as a static site on **Vercel**.
-- **Backend** — FastAPI + PyTorch + CLIP, deployed as a **Docker Hugging Face Space** (`Dockerfile`).
-  Kept off Vercel because `torch`/`transformers` exceed Vercel's serverless size limit.
-- The frontend calls the backend via `VITE_API_BASE` (absolute Space URL in production; empty in dev,
-  where Vite proxies `/api` to the local server).
+Everything deploys to **Vercel** as one project:
+
+- **Frontend** — React + Vite, built to `dist/` and served as static files.
+- **Backend** — FastAPI on a Vercel Python serverless function (`api/index.py`).
+- **AI** — **Hugging Face Inference Providers** over HTTPS. No `torch`/`transformers` in the bundle,
+  so the function stays well under Vercel's size limit.
+  - Image analysis: `google/gemma-3-27b-it` (vision-language model) → style tags, colors, search query.
+  - Captions: the same model, text-only.
+- **Images** — Pinterest official v5 API (if a token is set) → Pexels API fallback. Never scrapes.
+
+If no HF token is configured, the app degrades gracefully to local heuristics and caption templates
+rather than failing.
+
+## Environment
+
+Copy `.env.example` → `.env` (gitignored):
+
+```
+HF_TOKEN=hf_...            # Hugging Face token — powers image analysis + captions
+PEXELS_API_KEY=...         # free image source
+PINTEREST_ACCESS_TOKEN=... # optional, once the developer app is approved
+```
+
+The same variables must be set in **Vercel → Project → Settings → Environment Variables**.
 
 ## Run locally
 
-### Backend
 ```bash
+# backend
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn server.app.main:app --reload --port 8000
-```
 
-Create a `.env` in the project root (gitignored) — see `.env.example`:
-```
-PEXELS_API_KEY=your-pexels-key
-PINTEREST_ACCESS_TOKEN=your-pinterest-token   # optional, once the developer app is approved
-CLIP_MODEL=openai/clip-vit-base-patch32       # optional override
-CAPTION_MODEL=google/flan-t5-base             # optional override
-```
-
-### Frontend
-```bash
+# frontend (separate terminal)
 npm install
-npm run dev   # proxies /api -> http://127.0.0.1:8000
+npm run dev     # proxies /api -> http://127.0.0.1:8000
 ```
 
-## Deployment
+## Deploy
 
-### Backend → Hugging Face Space (Docker)
-1. Create a **Docker** Space at huggingface.co (any name).
-2. Add it as a git remote and push this repo — HF builds from the root `Dockerfile` and serves on port 7860.
-3. In the Space **Settings → Variables and secrets**, add `PEXELS_API_KEY` (and `PINTEREST_ACCESS_TOKEN` once approved).
-4. Note the public URL, e.g. `https://<user>-<space>.hf.space`.
+Push to `main` — Vercel builds the frontend and the Python function automatically.
+`vercel.json` sets the build, routes `/api/*` to the function, and gives it a 60s budget
+(the vision model round-trip is the slow part).
 
-### Frontend → Vercel (static)
-1. Import this repo in Vercel. Build command `npm run build`, output `dist` (already in `vercel.json`).
-2. Set env var **`VITE_API_BASE`** = the Space URL from above.
-3. Deploy. The static site calls the Space for all `/api/*` requests.
-
-## Inspiration sourcing (Pexels + official Pinterest API — no scraping)
+## Inspiration sourcing (no scraping)
 
 Pinterest's Developer Guidelines prohibit "using any automated means or form of scraping or data
 extraction to access information from Pinterest, except as expressly permitted." This app **never**
-scrapes pinterest.com. Instead:
+scrapes pinterest.com:
 
-1. If `PINTEREST_ACCESS_TOKEN` is set, it reads the authenticated user's own Pins via Pinterest's
-   official **v5 API** (`GET /v5/pins`). The public API has no site-wide pin search, so first-party
-   saved Pins are used as inspiration material.
+1. With `PINTEREST_ACCESS_TOKEN` set, it reads the authenticated user's own Pins via the official
+   **v5 API** (`GET /v5/pins`). The public API exposes no site-wide pin search, so first-party saved
+   Pins serve as inspiration material.
 2. Otherwise it uses the [Pexels API](https://www.pexels.com/api/) (free, no scraping) for
    lifestyle/outfit photography.
 
-Every candidate image is run through a single CLIP forward pass that both classifies it
-("a lifestyle photo of a person wearing a fashion outfit" vs. "a product photo of a single clothing
-item on a plain background") to filter out flat-lay/product shots, and produces the embedding used to
-rank the remainder by visual similarity to the uploaded photo.
+The vision model turns your upload into a targeted search phrase, so results are matched on the
+semantics of the look rather than raw keywords.

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import base64
+import json
 import os
-from concurrent.futures import ThreadPoolExecutor
+import re
 from io import BytesIO
-from pathlib import Path
 from typing import Dict, List, Optional
 
 import requests
@@ -11,6 +12,7 @@ from PIL import Image
 
 SUPPORTED_CATEGORIES = {"upper", "lower", "accessories", "tattoo"}
 
+# Kept as the fallback vocabulary when the vision model is unavailable.
 AESTHETIC_LABELS = [
     "streetwear", "old money", "y2k", "grunge", "minimalist", "techwear",
     "cottagecore", "preppy", "gothic", "athleisure", "boho chic", "formal",
@@ -18,149 +20,106 @@ AESTHETIC_LABELS = [
     "coastal", "military-inspired", "punk", "romantic", "sporty", "business casual",
 ]
 
-LIFESTYLE_PROMPT = "a lifestyle photo of a person wearing a fashion outfit"
-PRODUCT_PROMPT = "a product photo of a single clothing item on a plain background"
+# Vision-language model that "reads" the outfit image and returns structured style data.
+# Runs remotely on Hugging Face Inference Providers (free tier) — no torch in the bundle.
+VLM_MODEL = os.getenv("VLM_MODEL", "google/gemma-3-27b-it")
 
-_CLIP_MODEL = None
-_CLIP_PROCESSOR = None
-
-
-def _load_clip():
-    global _CLIP_MODEL, _CLIP_PROCESSOR
-    if _CLIP_MODEL is None:
-        from transformers import CLIPModel, CLIPProcessor
-
-        model_name = os.getenv("CLIP_MODEL", "openai/clip-vit-base-patch32")
-        _CLIP_MODEL = CLIPModel.from_pretrained(model_name)
-        _CLIP_PROCESSOR = CLIPProcessor.from_pretrained(model_name)
-        _CLIP_MODEL.eval()
-    return _CLIP_MODEL, _CLIP_PROCESSOR
+_HF_CLIENT = None
 
 
-def _run_clip_analysis(image: Image.Image, top_k: int = 4) -> Optional[Dict[str, object]]:
-    """Classify aesthetic style with CLIP zero-shot and return the image embedding
-    from the same forward pass, so tagging and similarity search share one model call.
-    """
+def _hf_client():
+    global _HF_CLIENT
+    if _HF_CLIENT is None:
+        from huggingface_hub import InferenceClient
+
+        token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN")
+        _HF_CLIENT = InferenceClient(token=token) if token else False
+    return _HF_CLIENT
+
+
+_VLM_PROMPT = (
+    "You are a fashion stylist. Analyze the {category} in this photo. "
+    "Reply with ONLY compact JSON, no markdown, in this exact shape: "
+    '{{"aesthetic_tags": ["3-5 concise fashion style tags"], '
+    '"colors": ["2-3 dominant colors"], '
+    '"search_query": "a short Pinterest-style search phrase for similar looks"}}'
+)
+
+
+def _image_to_data_uri(image: Image.Image) -> str:
+    buffer = BytesIO()
+    image.convert("RGB").save(buffer, format="JPEG", quality=85)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/jpeg;base64,{encoded}"
+
+
+def _extract_json(text: str) -> Optional[dict]:
+    """VLMs sometimes wrap JSON in ```json fences or prose. Pull the first JSON object out."""
+    if not text:
+        return None
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        return None
     try:
-        import torch
-
-        model, processor = _load_clip()
-        prompts = [f"a photo of {label} fashion style" for label in AESTHETIC_LABELS]
-        inputs = processor(text=prompts, images=image, return_tensors="pt", padding=True)
-        with torch.no_grad():
-            outputs = model(**inputs)
-
-        probs = outputs.logits_per_image.softmax(dim=1)[0].tolist()
-        ranked = sorted(zip(AESTHETIC_LABELS, probs), key=lambda pair: pair[1], reverse=True)
-
-        embedding = outputs.image_embeds[0]
-        embedding = (embedding / embedding.norm()).tolist()
-
-        return {
-            "aesthetic_tags": [label for label, _ in ranked[:top_k]],
-            "confidence": round(ranked[0][1], 3),
-            "embedding": embedding,
-        }
-    except Exception:
+        return json.loads(match.group(0))
+    except json.JSONDecodeError:
         return None
 
 
-def _analyze_candidate_image(url: str) -> Optional[Dict[str, object]]:
-    """Fetch a candidate image once and run a single CLIP forward pass that yields both
-    its embedding (for similarity ranking) and a lifestyle-vs-product classification, so
-    plain clothing/flat-lay shots can be filtered out before they reach the user.
+def _vlm_analyze(image: Image.Image, category: str) -> Optional[Dict[str, object]]:
+    """Ask the vision model to classify the outfit. Returns None on any failure so the
+    caller can fall back to lightweight local heuristics — the app never hard-fails.
     """
-    try:
-        import torch
-
-        response = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-        response.raise_for_status()
-        image = Image.open(BytesIO(response.content)).convert("RGB")
-
-        model, processor = _load_clip()
-        inputs = processor(text=[LIFESTYLE_PROMPT, PRODUCT_PROMPT], images=image, return_tensors="pt", padding=True)
-        with torch.no_grad():
-            outputs = model(**inputs)
-
-        lifestyle_score = outputs.logits_per_image.softmax(dim=1)[0].tolist()[0]
-
-        embedding = outputs.image_embeds[0]
-        embedding = (embedding / embedding.norm()).tolist()
-
-        return {
-            "embedding": embedding,
-            "is_lifestyle": lifestyle_score >= 0.5,
-            "lifestyle_score": round(lifestyle_score, 3),
-        }
-    except Exception:
+    client = _hf_client()
+    if not client:
         return None
-
-
-def _cosine_similarity(a: List[float], b: List[float]) -> float:
-    return sum(x * y for x, y in zip(a, b))
-
-
-def _average_embedding(embeddings: List[List[float]]) -> List[float]:
-    dimension = len(embeddings[0])
-    summed = [0.0] * dimension
-    for embedding in embeddings:
-        for index, value in enumerate(embedding):
-            summed[index] += value
-    norm = sum(value * value for value in summed) ** 0.5
-    if norm == 0:
-        return summed
-    return [value / norm for value in summed]
-
-
-def _analyze_and_filter_candidates(candidates: List[Dict[str, object]]) -> Dict[str, list]:
-    """Fetch + classify every candidate once. Returns lifestyle-photo candidates (annotated
-    with their embedding), off-topic product-photo candidates, and candidates that failed
-    to fetch/analyze at all, so callers can prefer lifestyle shots but still fall back
-    rather than return nothing.
-    """
-    lifestyle: List[Dict[str, object]] = []
-    product: List[Dict[str, object]] = []
-    unanalyzed: List[Dict[str, object]] = []
-
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        analyses = executor.map(
-            lambda candidate: _analyze_candidate_image(str(candidate.get("image_url", ""))), candidates
+    try:
+        completion = client.chat_completion(
+            model=VLM_MODEL,
+            max_tokens=200,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": _VLM_PROMPT.format(category=category)},
+                    {"type": "image_url", "image_url": {"url": _image_to_data_uri(image)}},
+                ],
+            }],
         )
+        data = _extract_json(completion.choices[0].message.content)
+        if not data:
+            return None
+        tags = [str(t).strip().lower() for t in data.get("aesthetic_tags", []) if str(t).strip()]
+        colors = [str(c).strip().lower() for c in data.get("colors", []) if str(c).strip()]
+        query = str(data.get("search_query", "")).strip()
+        if not tags:
+            return None
+        return {"aesthetic_tags": tags[:5], "colors": colors[:3] or ["neutral"], "search_query": query}
+    except Exception:
+        return None
 
-    for candidate, analysis in zip(candidates, analyses):
-        if analysis is None:
-            unanalyzed.append(candidate)
-            continue
-        annotated = dict(candidate)
-        annotated["_embedding"] = analysis["embedding"]
-        annotated["lifestyle_score"] = analysis["lifestyle_score"]
-        (lifestyle if analysis["is_lifestyle"] else product).append(annotated)
 
-    return {"lifestyle": lifestyle, "product": product, "unanalyzed": unanalyzed}
+def _classify_color_family(image: Image.Image) -> str:
+    image = image.convert("RGB")
+    pixels = list(image.resize((16, 16)).getdata())
+    r = sum(pixel[0] for pixel in pixels) / len(pixels)
+    g = sum(pixel[1] for pixel in pixels) / len(pixels)
+    b = sum(pixel[2] for pixel in pixels) / len(pixels)
+
+    if r > 180 and g > 170 and b > 160:
+        return "neutral"
+    if r > g and r > b:
+        return "warm"
+    if b > r and b > g:
+        return "cool"
+    return "neutral"
 
 
-def _rank_candidates_by_similarity(
-    candidates: List[Dict[str, object]], reference_embedding: List[float], max_results: int
-) -> List[Dict[str, object]]:
-    scored = []
-    for candidate in candidates:
-        embedding = candidate.get("_embedding")
-        if embedding is None:
-            continue
-        scored_candidate = {key: value for key, value in candidate.items() if key != "_embedding"}
-        scored_candidate["similarity_score"] = round(_cosine_similarity(reference_embedding, embedding), 3)
-        scored.append((scored_candidate["similarity_score"], scored_candidate))
-
-    scored.sort(key=lambda pair: pair[0], reverse=True)
-    return [candidate for _, candidate in scored][:max_results]
-
+# ---------------------------------------------------------------------------
+# Inspiration sourcing (Pinterest official API + Pexels, never scraping)
+# ---------------------------------------------------------------------------
 
 def _largest_pin_image(media: Dict[str, object]) -> str:
-    """Pick the highest-resolution image URL from a v5 Pin's media.images map.
-
-    Pinterest returns keys like "150x150", "400x300", "600x", "1200x". We prefer the
-    widest one so downstream CLIP analysis and display get the best available quality.
-    """
+    """Pick the highest-resolution image URL from a v5 Pin's media.images map."""
     images = media.get("images", {}) if isinstance(media, dict) else {}
     if not isinstance(images, dict):
         return ""
@@ -169,8 +128,7 @@ def _largest_pin_image(media: Dict[str, object]) -> str:
         head = str(key).split("x")[0]
         return int(head) if head.isdigit() else 0
 
-    best_url = ""
-    best_width = -1
+    best_url, best_width = "", -1
     for key, value in images.items():
         url = value.get("url") if isinstance(value, dict) else None
         if not url:
@@ -184,10 +142,9 @@ def _largest_pin_image(media: Dict[str, object]) -> str:
 def _fetch_pinterest_api_inspiration(query: str, limit: int) -> List[Dict[str, object]]:
     """Reads the authenticated user's own Pins through Pinterest's official v5 API.
 
-    Never scrapes pinterest.com — per Pinterest's Developer Guidelines (no automated
-    scraping/data extraction). The public v5 API does not expose a site-wide pin search,
-    so we use the user's saved Pins as first-party inspiration material; every candidate
-    is still CLIP-filtered and ranked by visual similarity downstream.
+    Never scrapes pinterest.com — per Pinterest's Developer Guidelines. The public v5 API
+    has no site-wide pin search, so the user's saved Pins are used as first-party
+    inspiration material.
     """
     token = os.getenv("PINTEREST_ACCESS_TOKEN")
     if not token:
@@ -255,49 +212,30 @@ def _fetch_inspiration_candidates(query: str, limit: int = 6) -> List[Dict[str, 
     pinterest_results = _fetch_pinterest_api_inspiration(query, limit)
     if pinterest_results:
         return pinterest_results
-
-    pexels_results = _fetch_pexels_inspiration(query, limit)
-    if pexels_results:
-        return pexels_results
-
-    return []
+    return _fetch_pexels_inspiration(query, limit)
 
 
-def _classify_color_family(image: Image.Image) -> str:
-    image = image.convert("RGB")
-    pixels = list(image.resize((16, 16)).getdata())
-    r = sum(pixel[0] for pixel in pixels) / len(pixels)
-    g = sum(pixel[1] for pixel in pixels) / len(pixels)
-    b = sum(pixel[2] for pixel in pixels) / len(pixels)
+# ---------------------------------------------------------------------------
+# Analysis payload
+# ---------------------------------------------------------------------------
 
-    if r > 180 and g > 170 and b > 160:
-        return "neutral"
-    if r > g and r > b:
-        return "warm"
-    if b > r and b > g:
-        return "cool"
-    return "neutral"
-
-
-def _build_rule_based_payload(image_path: str | Path, category: str) -> Dict[str, object]:
-    clip_result = None
-    if not Path(image_path).exists():
+def _build_rule_based_payload(image: Optional[Image.Image], category: str) -> Dict[str, object]:
+    if image is None:
         width, height = 400, 600
         dominant_color_family = "neutral"
     else:
-        with Image.open(image_path) as image:
-            width, height = image.size
-            dominant_color_family = _classify_color_family(image)
-            clip_result = _run_clip_analysis(image.convert("RGB"))
+        width, height = image.size
+        dominant_color_family = _classify_color_family(image)
 
+    vlm = _vlm_analyze(image, category) if image is not None else None
     orientation = "portrait" if height >= width else "landscape"
 
-    if clip_result:
-        style_tags = [category] + clip_result["aesthetic_tags"]
-        tag_source = "visual-classifier"
-        aesthetic_confidence = clip_result["confidence"]
-        embedding = clip_result["embedding"]
-        top_aesthetic = clip_result["aesthetic_tags"][0]
+    if vlm:
+        style_tags = [category] + vlm["aesthetic_tags"]
+        tag_source = "vision-model"
+        top_aesthetic = vlm["aesthetic_tags"][0]
+        colors = vlm["colors"]
+        search_query = vlm["search_query"]
     else:
         style_tags = ["casual", "streetwear"]
         if category == "tattoo":
@@ -309,9 +247,9 @@ def _build_rule_based_payload(image_path: str | Path, category: str) -> Dict[str
         elif category == "accessories":
             style_tags.extend(["accessories", "detail"])
         tag_source = "fallback-heuristic"
-        aesthetic_confidence = None
-        embedding = None
         top_aesthetic = None
+        colors = [dominant_color_family]
+        search_query = ""
 
     if dominant_color_family == "warm":
         fashion_summary = f"This {category} look reads warm and expressive, with strong fashion energy for contemporary styling."
@@ -330,10 +268,9 @@ def _build_rule_based_payload(image_path: str | Path, category: str) -> Dict[str
         "category": category,
         "style_tags": style_tags,
         "tag_source": tag_source,
-        "aesthetic_confidence": aesthetic_confidence,
-        "dominant_colors": [dominant_color_family],
+        "dominant_colors": colors,
         "analysis_mode": "live_engine",
-        "engine_components": ["geometry", "color", "category_tags"],
+        "engine_components": ["vision-model" if vlm else "heuristic", "color", "category_tags"],
         "image_summary": {
             "size": orientation,
             "dimensions": {"width": width, "height": height},
@@ -341,25 +278,43 @@ def _build_rule_based_payload(image_path: str | Path, category: str) -> Dict[str
         },
         "fashion_summary": fashion_summary,
         "fit_guidance": fit_guidance,
-        "keywords": [
-            "fashion reference",
-            f"{category} analysis",
-            "aesthetic inspiration",
-        ],
-        "_embedding": embedding,
+        "keywords": [k for k in [search_query, "fashion reference", f"{category} analysis"] if k],
+        "_search_query": search_query,
     }
 
 
-def build_analysis_payload(image_path: str | Path, category: str) -> Dict[str, object]:
-    return _build_rule_based_payload(image_path, category)
+def build_analysis_payload(image_source, category: str) -> Dict[str, object]:
+    """Accepts a filesystem path, raw bytes, or a PIL Image; returns the analysis payload."""
+    image: Optional[Image.Image] = None
+    try:
+        if isinstance(image_source, Image.Image):
+            image = image_source
+        elif isinstance(image_source, (bytes, bytearray)):
+            image = Image.open(BytesIO(bytes(image_source)))
+        else:
+            from pathlib import Path
+
+            if Path(image_source).exists():
+                image = Image.open(image_source)
+    except Exception:
+        image = None
+
+    if image is not None:
+        image = image.convert("RGB")
+    return _build_rule_based_payload(image, category)
 
 
 def _build_contextual_inspiration_query(query: str, analyses: List[Dict[str, object]] | None = None) -> str:
     if not analyses:
         return query
 
-    category_parts = []
-    style_parts = []
+    # Prefer a vision-model search phrase if one was produced.
+    for analysis in analyses:
+        phrase = analysis.get("_search_query")
+        if phrase:
+            return phrase
+
+    category_parts, style_parts = [], []
     for analysis in analyses:
         category = analysis.get("category")
         if category:
@@ -369,50 +324,32 @@ def _build_contextual_inspiration_query(query: str, analyses: List[Dict[str, obj
             if tag_value and tag_value not in {"casual", "streetwear"}:
                 style_parts.append(tag_value)
 
-    context_parts = []
-    if category_parts:
-        context_parts.extend(category_parts)
-    if style_parts:
-        context_parts.extend(style_parts[:8])
-
+    context_parts = category_parts + style_parts[:8]
     if not context_parts:
         return query
-
     return " ".join([query, " ", " ".join(dict.fromkeys(context_parts))]).strip()
 
 
 def build_inspiration_payload(
     query: str,
     analyses: List[Dict[str, object]] | None = None,
-    reference_embeddings: List[Optional[List[float]]] | None = None,
+    reference_embeddings=None,  # kept for signature compatibility; unused without CLIP
 ) -> Dict[str, object]:
     contextual_query = _build_contextual_inspiration_query(query, analyses)
-    valid_embeddings = [embedding for embedding in (reference_embeddings or []) if embedding]
-
     max_results = 6
-    candidates = _fetch_inspiration_candidates(contextual_query, limit=24)
+    candidates = _fetch_inspiration_candidates(contextual_query, limit=max_results)
 
-    buckets = _analyze_and_filter_candidates(candidates)
-    # Prefer genuine lifestyle/outfit photos; only reach for product shots or
-    # unanalyzed candidates if there aren't enough lifestyle matches to fill the grid.
-    preferred = buckets["lifestyle"] + buckets["unanalyzed"] + buckets["product"]
-
-    if valid_embeddings and buckets["lifestyle"]:
-        reference_embedding = _average_embedding(valid_embeddings)
-        results = _rank_candidates_by_similarity(buckets["lifestyle"], reference_embedding, max_results=max_results)
-        if len(results) < max_results:
-            filler = preferred[len(results):max_results]
-            results += [{key: value for key, value in candidate.items() if key != "_embedding"} for candidate in filler]
-        match_mode = "visual-similarity"
-    else:
-        results = [
-            {key: value for key, value in candidate.items() if key != "_embedding"}
-            for candidate in preferred[:max_results]
-        ]
-        match_mode = "keyword-only"
-
+    results = [
+        {key: value for key, value in candidate.items() if not key.startswith("_")}
+        for candidate in candidates[:max_results]
+    ]
     data_source = results[0].get("source") if results else "no-results"
-    return {"query": contextual_query, "results": results, "data_source": data_source, "match_mode": match_mode}
+    return {
+        "query": contextual_query,
+        "results": results,
+        "data_source": data_source,
+        "match_mode": "keyword-semantic",
+    }
 
 
 def build_recommendation_payload(analyses: List[Dict[str, object]]) -> Dict[str, object]:
@@ -432,11 +369,4 @@ def build_recommendation_payload(analyses: List[Dict[str, object]]) -> Dict[str,
         "grouped_analysis": grouped_analysis,
         "style_story": " | ".join(style_story_parts) if style_story_parts else "A focused fashion look is emerging from your uploads.",
         "fit_focus": "Use the outfit pieces together to balance silhouette, proportion, and confidence for a polished finish.",
-        "results": [
-            {
-                "title": "Style-ready outfit reference",
-                "source": "fashion engine",
-                "score": 0.92,
-            }
-        ],
     }
