@@ -84,9 +84,14 @@ match. `match_mode` in the API response reports `keyword-semantic` to be honest 
 
 ## 4. Current Sprint
 
-- [ ] Deploy to Vercel with `HF_TOKEN` + `PEXELS_API_KEY` env vars; verify live.
-- [ ] Push to GitHub.
-- [ ] Pinterest Developer app (needs the live privacy-policy URL) → add `PINTEREST_ACCESS_TOKEN`.
+**🟢 LIVE: https://ai-fashion-pose-style-finder.vercel.app**
+
+- [x] Deploy to Vercel with `HF_TOKEN` + `PEXELS_API_KEY` set (production/preview/development).
+- [x] Push to GitHub (`DhruvAgg10/Pinterest_Style_Scrapper`, `main`).
+- [x] Verified in production: `/api/health` → ok; `/api/analyze` → `tag_source: vision-model` in ~4s;
+      `/api/caption` → `caption_source: text-generation-model`; `/privacy-policy` → 200.
+- [ ] Pinterest Developer app → add `PINTEREST_ACCESS_TOKEN` (see §6). Privacy policy is now live at
+      https://ai-fashion-pose-style-finder.vercel.app/privacy-policy — that unblocks the application.
 
 ---
 
@@ -140,3 +145,6 @@ match. `match_mode` in the API response reports `keyword-semantic` to be honest 
   `vercel.json` (60s budget). Removed the `Dockerfile`/Space artifacts and the fake `score: 0.92` stub.
   Capped analysis to one image per category for the time budget. Tests 7 → 11, runtime 45s → 0.6s.
   Verified live end-to-end: photo → tags → semantic query → matching images → captions.
+- **2026-07-12** — **Deployed to production**: https://ai-fashion-pose-style-finder.vercel.app.
+  `HF_TOKEN` + `PEXELS_API_KEY` set on Vercel; pushed to GitHub. Confirmed the real pipeline runs on
+  Vercel (`tag_source: vision-model`, ~4s) — the deploy blocker that had been there from the start is gone.
