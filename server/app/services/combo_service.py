@@ -32,18 +32,18 @@ COMBO_CATEGORIES = ("upper", "lower", "shoes")
 # and the serverless function has a hard time budget.
 MAX_SCORED_COMBOS = 6
 
-_COMBO_PROMPT = (
-    "You are a fashion stylist rating one outfit{who}{occasion}. The images are, "
-    "in order: {order}. First identify each garment precisely (type, colour, "
-    "material). Then judge how well they work together as a viral, aesthetic "
-    "outfit{occasion_clause}. Reply with ONLY compact JSON, no markdown, in this "
-    "exact shape: "
-    '{{"aesthetic_score": <integer 1-10>, '
-    '"vibe_tags": ["3-4 concise style tags"], '
-    '"why": "one short sentence on why it works or does not", '
-    '"search_query": "a specific Pinterest search phrase describing this exact '
-    'look on a real person{who_query}{occasion_query}"}}'
+_GARMENT_PROMPT = (
+    "You are a fashion cataloguer. Look at this single {category} garment. "
+    "Identify it precisely. Reply with ONLY compact JSON, no markdown: "
+    '{{"item_type": "specific name e.g. white oxford shirt, black skinny jeans, '
+    'grey tank top, tan chelsea boots", '
+    '"primary_color": "main colour", '
+    '"secondary_color": "accent colour or empty", '
+    '"pattern": "solid/striped/plaid/graphic/etc", '
+    '"material": "cotton/denim/leather/knit/etc or empty", '
+    '"style": "1-2 style tags e.g. casual, formal, streetwear"}}'
 )
+
 
 
 def _load_image(image_source) -> Optional[Image.Image]:
@@ -74,65 +74,99 @@ def _extract_json(text: str) -> Optional[dict]:
         return None
 
 
-def _build_prompt(order: str, gender: str, occasion: str) -> str:
-    """Fill the combo prompt with optional gender + occasion context."""
-    who = f" for a {gender} person" if gender else ""
-    who_query = f" {gender}" if gender else ""
-    occ = f" for a {occasion}" if occasion else ""
-    occ_clause = f" suitable for {occasion}" if occasion else ""
-    occ_query = f" {occasion} outfit" if occasion else ""
-    return _COMBO_PROMPT.format(
-        who=who,
-        occasion=occ,
-        order=order,
-        occasion_clause=occ_clause,
-        who_query=who_query,
-        occasion_query=occ_query,
-    )
+def analyze_garment(image: Image.Image, category: str) -> Dict[str, object]:
+    """Stage 1: classify ONE garment image on its own (type, colour, pattern...).
+
+    Returns structured attributes plus a short `descriptor` string. Falls back to
+    a minimal descriptor if the vision model is unavailable, so combos still work.
+    """
+    client = get_hf_client()
+    fallback = {
+        "item_type": category,
+        "primary_color": "",
+        "secondary_color": "",
+        "pattern": "",
+        "material": "",
+        "style": "",
+        "descriptor": category,
+    }
+    if not client:
+        return fallback
+    try:
+        completion = client.chat_completion(
+            model=VLM_MODEL,
+            max_tokens=160,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": _GARMENT_PROMPT.format(category=category)},
+                    {"type": "image_url", "image_url": {"url": _image_to_data_uri(image)}},
+                ],
+            }],
+        )
+        data = _extract_json(completion.choices[0].message.content)
+    except Exception:
+        return fallback
+    if not data:
+        return fallback
+
+    attrs = {k: str(data.get(k, "")).strip() for k in
+             ("item_type", "primary_color", "secondary_color", "pattern", "material", "style")}
+    descriptor = " ".join(
+        p for p in [attrs["primary_color"], attrs["pattern"], attrs["item_type"]] if p
+    ) or attrs["item_type"] or category
+    attrs["descriptor"] = descriptor.strip()
+    return attrs
 
 
-def _score_combo(
-    items: List[Dict[str, object]], gender: str = "", occasion: str = ""
+def _score_combo_text(
+    descriptors: List[str], gender: str = "", occasion: str = ""
 ) -> Optional[Dict[str, object]]:
-    """Send one combo's garment images to the VLM and parse its rating.
+    """Stage 2: score a combo from its per-garment descriptors (text only, cheap).
 
-    ``items`` is a list of {category, image} dicts. Returns None on any failure
-    so the caller can skip this combo rather than hard-fail the whole request.
+    Because each garment was already identified in stage 1, the model reasons
+    over accurate item descriptions instead of guessing from stacked images.
     """
     client = get_hf_client()
     if not client:
         return None
-    order = ", ".join(item["category"] for item in items)
-    content: List[Dict[str, object]] = [
-        {"type": "text", "text": _build_prompt(order, gender, occasion)}
-    ]
-    for item in items:
-        content.append(
-            {"type": "image_url", "image_url": {"url": _image_to_data_uri(item["image"])}}
-        )
+    outfit = " + ".join(descriptors)
+    who = f" for a {gender}" if gender else ""
+    occ = f", worn for {occasion}," if occasion else ""
+    prompt = (
+        f"You are a fashion stylist. Rate this outfit{who}: {outfit}{occ}. "
+        "Judge how well the pieces work together as a viral, aesthetic look. "
+        "Reply with ONLY compact JSON, no markdown: "
+        '{"aesthetic_score": <integer 1-10>, '
+        '"vibe_tags": ["3-4 concise style tags"], '
+        '"why": "one short sentence on why it works or not", '
+        '"search_query": "a specific Pinterest search phrase for a real person '
+        f'wearing this exact outfit{who}{(" " + occasion) if occasion else ""}"}}'
+    )
     try:
         completion = client.chat_completion(
             model=VLM_MODEL,
             max_tokens=200,
-            messages=[{"role": "user", "content": content}],
+            messages=[{"role": "user", "content": prompt}],
         )
         data = _extract_json(completion.choices[0].message.content)
     except Exception:
         return None
     if not data:
         return None
-
     try:
         score = int(data.get("aesthetic_score", 0))
     except (TypeError, ValueError):
         score = 0
     tags = [str(t).strip().lower() for t in data.get("vibe_tags", []) if str(t).strip()]
+    query = str(data.get("search_query", "")).strip() or outfit
     return {
         "aesthetic_score": max(0, min(10, score)),
         "vibe_tags": tags[:4],
         "why": str(data.get("why", "")).strip(),
-        "search_query": str(data.get("search_query", "")).strip(),
+        "search_query": query,
     }
+
 
 
 def build_combos_payload(
@@ -148,16 +182,23 @@ def build_combos_payload(
     combo categories (upper/lower/shoes) drive combinations. Returns combos
     ranked by aesthetic score, each with inspiration photos to recreate.
     """
-    # Resolve images per category, dropping ones that fail to load.
+    # Stage 1: load each image and classify the garment ONCE (type/colour/etc).
+    # Analysing every image individually is the "understanding layer" — the model
+    # sees one garment at a time instead of guessing from a stack.
     loaded: Dict[str, List[Dict[str, object]]] = {}
     for category in COMBO_CATEGORIES:
-        images = []
+        items = []
         for index, source in enumerate(closet.get(category, []) or []):
             image = _load_image(source)
-            if image is not None:
-                images.append({"category": category, "image": image, "index": index})
-        if images:
-            loaded[category] = images
+            if image is None:
+                continue
+            attrs = analyze_garment(image, category)
+            items.append(
+                {"category": category, "index": index, "attrs": attrs,
+                 "descriptor": attrs["descriptor"]}
+            )
+        if items:
+            loaded[category] = items
 
     present = [c for c in COMBO_CATEGORIES if c in loaded]
     if len(present) < 2:
@@ -167,19 +208,25 @@ def build_combos_payload(
             "categories_present": present,
         }
 
-    # Cartesian product over whatever categories the user provided.
+    # Stage 2: combine and score from the accurate descriptors (text scoring).
     all_combos = list(product(*(loaded[c] for c in present)))
     scored: List[Dict[str, object]] = []
     for combo_items in all_combos[:max_scored]:
         items = list(combo_items)
-        rating = _score_combo(items, gender=gender, occasion=occasion)
+        descriptors = [it["descriptor"] for it in items]
+        rating = _score_combo_text(descriptors, gender=gender, occasion=occasion)
         if rating is None:
             continue
-        query = rating["search_query"] or " ".join(rating["vibe_tags"]) or "aesthetic outfit"
+        query = rating["search_query"] or " ".join(descriptors) or "aesthetic outfit"
         inspiration = _fetch_inspiration_candidates(query, limit=inspiration_per_combo)
         scored.append(
             {
-                "items": [{"category": it["category"], "index": it["index"]} for it in items],
+                "items": [
+                    {"category": it["category"], "index": it["index"],
+                     "item_type": it["attrs"]["item_type"],
+                     "color": it["attrs"]["primary_color"]}
+                    for it in items
+                ],
                 "aesthetic_score": rating["aesthetic_score"],
                 "vibe_tags": rating["vibe_tags"],
                 "why": rating["why"],
