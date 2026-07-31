@@ -33,13 +33,16 @@ COMBO_CATEGORIES = ("upper", "lower", "shoes")
 MAX_SCORED_COMBOS = 6
 
 _COMBO_PROMPT = (
-    "You are a fashion stylist rating one outfit. The images are, in order: "
-    "{order}. Judge how well they work together as a viral, aesthetic outfit. "
-    "Reply with ONLY compact JSON, no markdown, in this exact shape: "
+    "You are a fashion stylist rating one outfit{who}{occasion}. The images are, "
+    "in order: {order}. First identify each garment precisely (type, colour, "
+    "material). Then judge how well they work together as a viral, aesthetic "
+    "outfit{occasion_clause}. Reply with ONLY compact JSON, no markdown, in this "
+    "exact shape: "
     '{{"aesthetic_score": <integer 1-10>, '
     '"vibe_tags": ["3-4 concise style tags"], '
     '"why": "one short sentence on why it works or does not", '
-    '"search_query": "a short Pinterest-style search phrase for photos of this look"}}'
+    '"search_query": "a specific Pinterest search phrase describing this exact '
+    'look on a real person{who_query}{occasion_query}"}}'
 )
 
 
@@ -71,7 +74,26 @@ def _extract_json(text: str) -> Optional[dict]:
         return None
 
 
-def _score_combo(items: List[Dict[str, object]]) -> Optional[Dict[str, object]]:
+def _build_prompt(order: str, gender: str, occasion: str) -> str:
+    """Fill the combo prompt with optional gender + occasion context."""
+    who = f" for a {gender} person" if gender else ""
+    who_query = f" {gender}" if gender else ""
+    occ = f" for a {occasion}" if occasion else ""
+    occ_clause = f" suitable for {occasion}" if occasion else ""
+    occ_query = f" {occasion} outfit" if occasion else ""
+    return _COMBO_PROMPT.format(
+        who=who,
+        occasion=occ,
+        order=order,
+        occasion_clause=occ_clause,
+        who_query=who_query,
+        occasion_query=occ_query,
+    )
+
+
+def _score_combo(
+    items: List[Dict[str, object]], gender: str = "", occasion: str = ""
+) -> Optional[Dict[str, object]]:
     """Send one combo's garment images to the VLM and parse its rating.
 
     ``items`` is a list of {category, image} dicts. Returns None on any failure
@@ -82,7 +104,7 @@ def _score_combo(items: List[Dict[str, object]]) -> Optional[Dict[str, object]]:
         return None
     order = ", ".join(item["category"] for item in items)
     content: List[Dict[str, object]] = [
-        {"type": "text", "text": _COMBO_PROMPT.format(order=order)}
+        {"type": "text", "text": _build_prompt(order, gender, occasion)}
     ]
     for item in items:
         content.append(
@@ -117,6 +139,8 @@ def build_combos_payload(
     closet: Dict[str, List],
     max_scored: int = MAX_SCORED_COMBOS,
     inspiration_per_combo: int = 4,
+    gender: str = "",
+    occasion: str = "",
 ) -> Dict[str, object]:
     """Build and rank outfit combos from a closet.
 
@@ -148,7 +172,7 @@ def build_combos_payload(
     scored: List[Dict[str, object]] = []
     for combo_items in all_combos[:max_scored]:
         items = list(combo_items)
-        rating = _score_combo(items)
+        rating = _score_combo(items, gender=gender, occasion=occasion)
         if rating is None:
             continue
         query = rating["search_query"] or " ".join(rating["vibe_tags"]) or "aesthetic outfit"

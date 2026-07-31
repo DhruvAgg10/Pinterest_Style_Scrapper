@@ -199,9 +199,21 @@ def _fetch_pexels_inspiration(query: str, limit: int) -> List[Dict[str, object]]
 
 
 def _fetch_inspiration_candidates(query: str, limit: int = 6) -> List[Dict[str, object]]:
-    pinterest_results = _fetch_pinterest_api_inspiration(query, limit)
+    """Inspiration sources, in order of aesthetic quality:
+
+    1. Pinterest keyword search (unofficial front-end endpoint) — the aesthetic
+       lifestyle/outfit photos users actually want.
+    2. Pinterest official v5 API — only if an access token is configured.
+    3. Pexels — legal free stock fallback when Pinterest is unavailable.
+    """
+    from .pinterest_scraper import search_pinterest
+
+    pinterest_results = search_pinterest(query, limit)
     if pinterest_results:
         return pinterest_results
+    api_results = _fetch_pinterest_api_inspiration(query, limit)
+    if api_results:
+        return api_results
     return _fetch_pexels_inspiration(query, limit)
 
 

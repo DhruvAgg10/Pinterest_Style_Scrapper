@@ -25,7 +25,14 @@ export function AuthProvider({ children }) {
   const signInWithEmail = (email, password) =>
     supabase.auth.signInWithPassword({ email, password });
   const signUpWithEmail = (email, password) =>
-    supabase.auth.signUp({ email, password });
+    supabase.auth.signUp({
+      email,
+      password,
+      // Send the confirmation link back to the current site, not Supabase's
+      // default localhost. The same URL must be allow-listed in Supabase ->
+      // Authentication -> URL Configuration (Site URL + Redirect URLs).
+      options: { emailRedirectTo: window.location.origin },
+    });
   const signOut = () => supabase.auth.signOut();
 
   return (

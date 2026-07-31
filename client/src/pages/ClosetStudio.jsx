@@ -12,8 +12,13 @@ const CATEGORIES = [
   { key: 'shoes', label: 'Shoes', hint: 'sneakers, boots, heels', accent: '#b07ac8' },
 ];
 
+const GENDERS = ['men', 'women', 'unisex'];
+const OCCASIONS = ['casual', 'gym', 'date', 'movie', 'party', 'work', 'travel', 'brunch'];
+
 export function ClosetStudio() {
   const [closet, setCloset] = useState({ upper: [], lower: [], shoes: [] });
+  const [gender, setGender] = useState('unisex');
+  const [occasion, setOccasion] = useState('casual');
   const [combos, setCombos] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -47,6 +52,8 @@ export function ClosetStudio() {
     closet.upper.forEach((f) => form.append('upper_images', f));
     closet.lower.forEach((f) => form.append('lower_images', f));
     closet.shoes.forEach((f) => form.append('shoes_images', f));
+    form.append('gender', gender === 'unisex' ? '' : gender);
+    form.append('occasion', occasion);
     try {
       const { data } = await axios.post('/api/combos', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -106,6 +113,42 @@ export function ClosetStudio() {
             />
           </div>
         ))}
+      </section>
+
+      {/* preferences */}
+      <section className="mt-8 grid gap-5 rounded-2xl glass p-6 sm:grid-cols-[auto_1fr] sm:items-center">
+        <div className="flex flex-col gap-2">
+          <span className="text-xs uppercase tracking-widest text-muted">Styled for</span>
+          <div className="flex gap-2">
+            {GENDERS.map((g) => (
+              <button
+                key={g}
+                onClick={() => setGender(g)}
+                className={`rounded-full px-4 py-1.5 text-sm capitalize transition-colors ${
+                  gender === g ? 'bg-accent text-ink' : 'bg-white/[0.05] text-muted hover:text-white'
+                }`}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-col gap-2">
+          <span className="text-xs uppercase tracking-widest text-muted">Occasion</span>
+          <div className="flex flex-wrap gap-2">
+            {OCCASIONS.map((o) => (
+              <button
+                key={o}
+                onClick={() => setOccasion(o)}
+                className={`rounded-full px-4 py-1.5 text-sm capitalize transition-colors ${
+                  occasion === o ? 'bg-accent text-ink' : 'bg-white/[0.05] text-muted hover:text-white'
+                }`}
+              >
+                {o}
+              </button>
+            ))}
+          </div>
+        </div>
       </section>
 
       {/* action bar */}

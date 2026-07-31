@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -84,8 +84,14 @@ async def build_combos(
     upper_images: List[UploadFile] = File(default=None),
     lower_images: List[UploadFile] = File(default=None),
     shoes_images: List[UploadFile] = File(default=None),
+    gender: str = Form(default=""),
+    occasion: str = Form(default=""),
 ) -> dict[str, object]:
-    """Take a closet (multiple garments per category), build and rank outfit combos."""
+    """Take a closet (multiple garments per category), build and rank outfit combos.
+
+    Optional `gender` and `occasion` (e.g. gym, date, movie) sharpen both the
+    aesthetic scoring and the inspiration search phrase.
+    """
 
     async def read_group(files: Optional[List[UploadFile]]) -> List[bytes]:
         contents = []
@@ -101,7 +107,7 @@ async def build_combos(
         "lower": await read_group(lower_images),
         "shoes": await read_group(shoes_images),
     }
-    return build_combos_payload(closet)
+    return build_combos_payload(closet, gender=gender.strip(), occasion=occasion.strip())
 
 
 @app.post("/api/caption")

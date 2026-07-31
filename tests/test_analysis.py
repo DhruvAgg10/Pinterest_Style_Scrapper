@@ -87,7 +87,7 @@ def test_build_inspiration_payload_reports_data_source() -> None:
 
     assert payload["query"] == "fashion outfit"
     assert isinstance(payload["results"], list)
-    assert payload["data_source"] in {"pinterest-api", "pexels", "no-results"}
+    assert payload["data_source"] in {"pinterest", "pinterest-api", "pexels", "no-results"}
     assert all(not key.startswith("_") for item in payload["results"] for key in item)
 
 
