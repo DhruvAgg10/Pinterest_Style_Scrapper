@@ -1,9 +1,14 @@
 import { useState } from 'react';
+import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, ChevronDown } from 'lucide-react';
+import { Sparkles, MapPin, Loader2 } from 'lucide-react';
 import { TiltCard } from './TiltCard';
 
-/** Colour the score badge from red (low) through gold to green (high). */
+const LOCATIONS = [
+  'cafe', 'street style', 'beach', 'rooftop', 'city night',
+  'mountains', 'park', 'urban', 'studio',
+];
+
 function scoreColor(score) {
   if (score >= 8) return '#5bbf7a';
   if (score >= 6) return '#c8a15a';
@@ -12,12 +17,29 @@ function scoreColor(score) {
 }
 
 /**
- * One ranked outfit combo. `combo.items` reference the uploaded garments by
- * category+index; `previews` maps "category:index" -> object URL for thumbnails.
+ * One ranked outfit combo. Pick a location and the card fetches reference photos
+ * of a person wearing this outfit in that setting (via /api/looks).
  */
 export function ComboCard({ combo, previews, rank }) {
-  const [open, setOpen] = useState(false);
   const color = scoreColor(combo.aesthetic_score);
+  const [location, setLocation] = useState(null);
+  const [looks, setLooks] = useState(combo.inspiration || []);
+  const [loading, setLoading] = useState(false);
+
+  const pickLocation = async (loc) => {
+    setLocation(loc);
+    setLoading(true);
+    try {
+      const { data } = await axios.get('/api/looks', {
+        params: { query: combo.search_query, location: loc, limit: 8 },
+      });
+      setLooks(data.results || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <TiltCard className="p-5">
@@ -60,48 +82,67 @@ export function ComboCard({ combo, previews, rank }) {
 
         {combo.why && <p className="text-sm leading-relaxed text-muted">{combo.why}</p>}
 
-        {combo.inspiration?.length > 0 && (
-          <div>
-            <button
-              onClick={() => setOpen((o) => !o)}
-              className="flex w-full items-center justify-between text-sm text-accent"
-            >
-              <span>Recreate this look · {combo.inspiration.length} refs</span>
-              <ChevronDown
-                size={16}
-                className={`transition-transform ${open ? 'rotate-180' : ''}`}
-              />
-            </button>
-            <AnimatePresence>
-              {open && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden"
-                >
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    {combo.inspiration.map((pic, i) => (
-                      <a
-                        key={i}
-                        href={pic.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="aspect-[3/4] overflow-hidden rounded-lg"
-                      >
-                        <img
-                          src={pic.image_url}
-                          alt={pic.title || 'inspiration'}
-                          className="h-full w-full object-cover transition-transform hover:scale-105"
-                        />
-                      </a>
-                    ))}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+        {/* location picker */}
+        <div>
+          <div className="mb-2 flex items-center gap-1.5 text-xs uppercase tracking-widest text-muted">
+            <MapPin size={12} /> See this outfit in
           </div>
-        )}
+          <div className="flex flex-wrap gap-1.5">
+            {LOCATIONS.map((loc) => (
+              <button
+                key={loc}
+                onClick={() => pickLocation(loc)}
+                className={`rounded-full px-3 py-1 text-xs capitalize transition-colors ${
+                  location === loc ? 'bg-accent text-ink' : 'bg-white/[0.05] text-muted hover:text-white'
+                }`}
+              >
+                {loc}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* reference gallery */}
+        <div className="min-h-[4rem]">
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted">
+              <Loader2 className="animate-spin" size={16} /> Finding {location} looks…
+            </div>
+          ) : looks.length > 0 ? (
+            <>
+              {location && (
+                <p className="mb-2 text-xs text-accent-soft">
+                  This outfit · <span className="capitalize">{location}</span>
+                </p>
+              )}
+              <div className="grid grid-cols-2 gap-2">
+                <AnimatePresence mode="popLayout">
+                  {looks.map((pic, i) => (
+                    <motion.a
+                      key={pic.image_url + i}
+                      layout
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      href={pic.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="aspect-[3/4] overflow-hidden rounded-lg"
+                    >
+                      <img
+                        src={pic.image_url}
+                        alt={pic.title || 'reference'}
+                        loading="lazy"
+                        className="h-full w-full object-cover transition-transform hover:scale-105"
+                      />
+                    </motion.a>
+                  ))}
+                </AnimatePresence>
+              </div>
+            </>
+          ) : (
+            <p className="py-4 text-center text-xs text-muted">Pick a location to see references.</p>
+          )}
+        </div>
       </div>
     </TiltCard>
   );

@@ -110,6 +110,26 @@ async def build_combos(
     return build_combos_payload(closet, gender=gender.strip(), occasion=occasion.strip())
 
 
+@app.get("/api/looks")
+def looks(query: str, location: str = "", limit: int = 8) -> dict[str, object]:
+    """Reference photos of one outfit worn in a chosen location.
+
+    `query` describes the outfit (e.g. the combo's search phrase); `location`
+    (cafe, beach, street, rooftop, ...) is appended so results show a real
+    person in that setting wearing a similar look.
+    """
+    from .services.image_service import _fetch_inspiration_candidates
+
+    phrase = f"{query} {location}".strip() if location else query
+    results = _fetch_inspiration_candidates(phrase, limit=limit)
+    return {
+        "query": phrase,
+        "location": location,
+        "results": results,
+        "data_source": results[0].get("source") if results else "no-results",
+    }
+
+
 @app.post("/api/caption")
 def generate_caption(request: CaptionRequest) -> dict[str, object]:
     return build_caption_payload(request.style_tags, request.title)
