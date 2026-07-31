@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 from .services.caption_service import build_caption_payload
+from .services.combo_service import build_combos_payload
 from .services.image_service import build_analysis_payload, build_inspiration_payload, build_recommendation_payload
 
 
@@ -76,6 +77,31 @@ async def analyze_images(
         if isinstance(analysis, dict):
             analysis.pop("_search_query", None)
     return recommendation
+
+
+@app.post("/api/combos")
+async def build_combos(
+    upper_images: List[UploadFile] = File(default=None),
+    lower_images: List[UploadFile] = File(default=None),
+    shoes_images: List[UploadFile] = File(default=None),
+) -> dict[str, object]:
+    """Take a closet (multiple garments per category), build and rank outfit combos."""
+
+    async def read_group(files: Optional[List[UploadFile]]) -> List[bytes]:
+        contents = []
+        for upload in files or []:
+            try:
+                contents.append(await upload.read())
+            except Exception:
+                continue
+        return contents
+
+    closet = {
+        "upper": await read_group(upper_images),
+        "lower": await read_group(lower_images),
+        "shoes": await read_group(shoes_images),
+    }
+    return build_combos_payload(closet)
 
 
 @app.post("/api/caption")

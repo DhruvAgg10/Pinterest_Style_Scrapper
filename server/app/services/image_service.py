@@ -10,6 +10,8 @@ from typing import Dict, List, Optional
 import requests
 from PIL import Image
 
+from .hf_client import get_hf_client
+
 SUPPORTED_CATEGORIES = {"upper", "lower", "accessories", "tattoo"}
 
 # Kept as the fallback vocabulary when the vision model is unavailable.
@@ -23,18 +25,6 @@ AESTHETIC_LABELS = [
 # Vision-language model that "reads" the outfit image and returns structured style data.
 # Runs remotely on Hugging Face Inference Providers (free tier) — no torch in the bundle.
 VLM_MODEL = os.getenv("VLM_MODEL", "google/gemma-3-27b-it")
-
-_HF_CLIENT = None
-
-
-def _hf_client():
-    global _HF_CLIENT
-    if _HF_CLIENT is None:
-        from huggingface_hub import InferenceClient
-
-        token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN")
-        _HF_CLIENT = InferenceClient(token=token) if token else False
-    return _HF_CLIENT
 
 
 _VLM_PROMPT = (
@@ -70,7 +60,7 @@ def _vlm_analyze(image: Image.Image, category: str) -> Optional[Dict[str, object
     """Ask the vision model to classify the outfit. Returns None on any failure so the
     caller can fall back to lightweight local heuristics — the app never hard-fails.
     """
-    client = _hf_client()
+    client = get_hf_client()
     if not client:
         return None
     try:
@@ -333,7 +323,6 @@ def _build_contextual_inspiration_query(query: str, analyses: List[Dict[str, obj
 def build_inspiration_payload(
     query: str,
     analyses: List[Dict[str, object]] | None = None,
-    reference_embeddings=None,  # kept for signature compatibility; unused without CLIP
 ) -> Dict[str, object]:
     contextual_query = _build_contextual_inspiration_query(query, analyses)
     max_results = 6

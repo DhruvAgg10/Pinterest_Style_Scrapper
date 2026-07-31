@@ -4,11 +4,11 @@ import os
 import random
 from typing import Dict, List, Optional
 
+from .hf_client import get_hf_client
+
 # Instruct model on Hugging Face Inference Providers (free tier). No torch locally.
 # Same model as the image analyzer — it is the one reliably served for this account.
 CAPTION_MODEL = os.getenv("CAPTION_MODEL", "google/gemma-3-27b-it")
-
-_HF_CLIENT = None
 
 _FALLBACK_NORMAL_TEMPLATES = [
     "Feeling good in this {aesthetic} look today.",
@@ -25,18 +25,8 @@ _FALLBACK_TRENDY_TEMPLATES = [
 ]
 
 
-def _hf_client():
-    global _HF_CLIENT
-    if _HF_CLIENT is None:
-        from huggingface_hub import InferenceClient
-
-        token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_TOKEN")
-        _HF_CLIENT = InferenceClient(token=token) if token else False
-    return _HF_CLIENT
-
-
 def _generate_with_model(prompt: str) -> str:
-    client = _hf_client()
+    client = get_hf_client()
     if not client:
         raise RuntimeError("no HF token configured")
     completion = client.chat_completion(
