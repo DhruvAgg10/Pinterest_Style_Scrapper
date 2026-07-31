@@ -23,15 +23,15 @@ function scoreColor(score) {
 export function ComboCard({ combo, previews, rank }) {
   const color = scoreColor(combo.aesthetic_score);
   const [location, setLocation] = useState(null);
+  const [want, setWant] = useState('');
   const [looks, setLooks] = useState(combo.inspiration || []);
   const [loading, setLoading] = useState(false);
 
-  const pickLocation = async (loc) => {
-    setLocation(loc);
+  const fetchLooks = async (loc, wantText) => {
     setLoading(true);
     try {
       const { data } = await axios.get('/api/looks', {
-        params: { query: combo.search_query, location: loc, limit: 8 },
+        params: { query: combo.search_query, location: loc || '', want: wantText || '', limit: 8 },
       });
       setLooks(data.results || []);
     } catch (e) {
@@ -39,6 +39,11 @@ export function ComboCard({ combo, previews, rank }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const pickLocation = (loc) => {
+    setLocation(loc);
+    fetchLooks(loc, want);
   };
 
   return (
@@ -100,6 +105,28 @@ export function ComboCard({ combo, previews, rank }) {
               </button>
             ))}
           </div>
+
+          {/* free-text intent */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              fetchLooks(location, want);
+            }}
+            className="mt-2 flex gap-2"
+          >
+            <input
+              value={want}
+              onChange={(e) => setWant(e.target.value)}
+              placeholder="What kind of pic? e.g. candid full body, mirror selfie"
+              className="h-9 flex-1 rounded-full bg-white/[0.05] px-4 text-xs outline-none ring-accent/50 focus:ring-2"
+            />
+            <button
+              type="submit"
+              className="rounded-full bg-white/[0.08] px-4 text-xs text-white hover:bg-white/[0.14]"
+            >
+              Find
+            </button>
+          </form>
         </div>
 
         {/* reference gallery */}

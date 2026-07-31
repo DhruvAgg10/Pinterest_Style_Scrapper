@@ -111,20 +111,23 @@ async def build_combos(
 
 
 @app.get("/api/looks")
-def looks(query: str, location: str = "", limit: int = 8) -> dict[str, object]:
-    """Reference photos of one outfit worn in a chosen location.
+def looks(query: str, location: str = "", want: str = "", limit: int = 8) -> dict[str, object]:
+    """Reference photos of one outfit, in a chosen location and/or matching the
+    kind of photo the user asked for.
 
-    `query` describes the outfit (e.g. the combo's search phrase); `location`
-    (cafe, beach, street, rooftop, ...) is appended so results show a real
-    person in that setting wearing a similar look.
+    `query` describes the outfit (the combo's search phrase); `location` (cafe,
+    beach, rooftop, ...) sets the setting; `want` is the user's free-text intent
+    (e.g. "candid full body", "mirror selfie") which is turned into keywords.
     """
     from .services.image_service import _fetch_inspiration_candidates
+    from .services.combo_service import build_look_keyword
 
-    phrase = f"{query} {location}".strip() if location else query
+    phrase = build_look_keyword(query, location=location.strip(), want=want.strip())
     results = _fetch_inspiration_candidates(phrase, limit=limit)
     return {
         "query": phrase,
         "location": location,
+        "want": want,
         "results": results,
         "data_source": results[0].get("source") if results else "no-results",
     }

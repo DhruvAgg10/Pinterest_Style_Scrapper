@@ -132,12 +132,18 @@ def _score_combo_text(
         return None
     outfit = " + ".join(descriptors)
     who = f" for a {gender}" if gender else ""
-    occ = f", worn for {occasion}," if occasion else ""
+    occ_rule = (
+        f' Also judge if this outfit is actually appropriate to WEAR for {occasion} '
+        f'(e.g. a dress shirt is not gym-appropriate). Set "suitable" false if not.'
+        if occasion else ""
+    )
+    suitable_field = '"suitable": <true or false>, ' if occasion else ""
     prompt = (
-        f"You are a fashion stylist. Rate this outfit{who}: {outfit}{occ}. "
-        "Judge how well the pieces work together as a viral, aesthetic look. "
-        "Reply with ONLY compact JSON, no markdown: "
-        '{"aesthetic_score": <integer 1-10>, '
+        f"You are a fashion stylist. Rate this outfit{who}: {outfit}."
+        f"{occ_rule} Judge how well the pieces work together as a viral, aesthetic "
+        "look. Reply with ONLY compact JSON, no markdown: "
+        "{" + suitable_field +
+        '"aesthetic_score": <integer 1-10>, '
         '"vibe_tags": ["3-4 concise style tags"], '
         '"why": "one short sentence on why it works or not", '
         '"search_query": "a specific Pinterest search phrase for a real person '
@@ -160,13 +166,48 @@ def _score_combo_text(
         score = 0
     tags = [str(t).strip().lower() for t in data.get("vibe_tags", []) if str(t).strip()]
     query = str(data.get("search_query", "")).strip() or outfit
+    # Default suitable True when the model omits it (no occasion given).
+    suitable = data.get("suitable", True)
     return {
         "aesthetic_score": max(0, min(10, score)),
         "vibe_tags": tags[:4],
         "why": str(data.get("why", "")).strip(),
         "search_query": query,
+        "suitable": bool(suitable) if isinstance(suitable, bool) else True,
     }
 
+
+
+def build_look_keyword(outfit: str, location: str = "", want: str = "") -> str:
+    """Turn an outfit + optional location + free-text intent into a tight Pinterest
+    search keyword. Uses the model when available; otherwise concatenates.
+
+    `want` is the user's own words for the kind of photo they want, e.g.
+    "candid full body shots", "moody film grain", "mirror selfie".
+    """
+    parts = [p for p in [outfit, location, want] if p]
+    fallback = " ".join(parts).strip() or outfit
+    client = get_hf_client()
+    if not client or not (location or want):
+        return fallback
+    prompt = (
+        "Write ONE short Pinterest search phrase (max 8 words, no quotes, no "
+        "punctuation) that would surface aesthetic photos of a real person wearing "
+        f"this outfit: {outfit}."
+        + (f" Setting/location: {location}." if location else "")
+        + (f" The user wants: {want}." if want else "")
+        + " Reply with only the phrase."
+    )
+    try:
+        completion = client.chat_completion(
+            model=VLM_MODEL,
+            max_tokens=30,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        phrase = completion.choices[0].message.content.strip().strip('"').replace("\n", " ")
+        return phrase or fallback
+    except Exception:
+        return fallback
 
 
 def build_combos_payload(
@@ -209,13 +250,24 @@ def build_combos_payload(
         }
 
     # Stage 2: combine and score from the accurate descriptors (text scoring).
+    # Keep scoring until we have `max_scored` suitable combos, but never make more
+    # than `call_budget` model calls, to protect the serverless time budget.
     all_combos = list(product(*(loaded[c] for c in present)))
+    call_budget = max_scored * 3 if occasion else max_scored
     scored: List[Dict[str, object]] = []
-    for combo_items in all_combos[:max_scored]:
+    calls = 0
+    for combo_items in all_combos:
+        if len(scored) >= max_scored or calls >= call_budget:
+            break
+        calls += 1
         items = list(combo_items)
         descriptors = [it["descriptor"] for it in items]
         rating = _score_combo_text(descriptors, gender=gender, occasion=occasion)
         if rating is None:
+            continue
+        # When an occasion is chosen, drop combos the stylist deems inappropriate
+        # to wear there (e.g. a dress shirt for "gym").
+        if occasion and not rating.get("suitable", True):
             continue
         query = rating["search_query"] or " ".join(descriptors) or "aesthetic outfit"
         inspiration = _fetch_inspiration_candidates(query, limit=inspiration_per_combo)
